@@ -1,6 +1,8 @@
 # HTML imports polyfill
 This is a quick and dirty polyfill for HTML imports, used by [Construct 3](https://www.construct.net).
 
+For background, see the blog post [HTML Imports are the best web component](https://www.scirra.com/blog/ashley/34/html-imports-are-the-best-web-component).
+
 ## Usage
 
 Simply include htmlimports.js with a normal script tag.
