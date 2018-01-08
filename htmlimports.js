@@ -23,6 +23,25 @@
 		
 		return url.substr(0, last_slash + 1);
 	};
+	
+	// Determine base URL of document.
+	const baseElem = document.querySelector("base");
+	let baseHref = ((baseElem && baseElem.hasAttribute("href")) ? baseElem.getAttribute("href") : "");
+	
+	// If there is a base href, ensure it is of the form 'path/' (not '/path', 'path' etc)
+	if (baseHref)
+	{
+		if (baseHref.startsWith("/"))
+			baseHref = baseHref.substr(1);
+		
+		if (!baseHref.endsWith("/"))
+			baseHref += "/";
+	}
+	
+	function GetBaseURL()
+	{
+		return GetPathFromURL(location.origin + location.pathname) + baseHref;
+	};
 
 	function FetchAs(url, responseType)
 	{
@@ -116,7 +135,7 @@
 		{
 			// Map the full script src to its import document for GetImportDocument().
 			const scriptUrl = context.baseUrl + elem.getAttribute("src");
-			scriptUrlToImportDoc.set(new URL(scriptUrl, location.origin).toString(), context.importDoc);
+			scriptUrlToImportDoc.set(new URL(scriptUrl, GetBaseURL()).toString(), context.importDoc);
 
 			context.dependencies.push({
 				type: "script",
@@ -209,6 +228,13 @@
 		return loadDocPromise
 		.then(doc =>
 		{
+			// HACK: in Edge, due to this bug: https://developer.microsoft.com/en-us/microsoft-edge/platform/issues/12458748/
+			// the fetched document URL is incorrect. doc.URL is also read-only so cannot directly be assigned. To work around this,
+			// calculate the correct URL and use Object.defineProperty to override the returned document URL.
+			Object.defineProperty(doc, "URL", {
+				value: new URL(url, GetBaseURL()).toString()
+			});
+			
 			context.importDoc = doc;
 
 			// Find all interesting top-level elements (style, imports, scripts)
@@ -269,7 +295,15 @@
 						if (!importFetch)
 							return null;		// de-duplicated
 						
-						return importFetch.then(importDoc => _AddImport(url, importDoc, rootContext))
+						return importFetch.then(importDoc =>
+						{
+							// HACK: same doc.URL bug workaround as used above.
+							Object.defineProperty(importDoc, "URL", {
+								value: new URL(url, GetBaseURL()).toString()
+							});
+							
+							return _AddImport(url, importDoc, rootContext);
+						})
 						.then(() => rootContext.progress.loaded++);
 					});
 				}
@@ -280,10 +314,19 @@
 					// of execution.
 					ret = ret.then(() =>
 					{
-						group.map(dep =>
-						{
-							rootContext.scriptPromises.push(AddScriptTag(dep.url));
-						});
+						const scriptPromises = group.map(dep => AddScriptTag(dep.url));
+						rootContext.scriptPromises.push(...scriptPromises);
+						
+						// In crash reports, somehow the AddImport() promise can resolve before all the scripts
+						// have loaded. Currently it's not known how this could happen; the root import clearly
+						// waits for all promises in rootContext.scriptPromises to resolve before continuing.
+						// As a shotgun hack to try to work around this, force the root-level scripts to finish
+						// sequentially before continuing. This has negligible performance impact locally but
+						// ought to provide a stronger guarantee that scripts have loaded before continuing.
+						if (isRoot)
+							return Promise.all(scriptPromises);
+						else
+							return Promise.resolve();
 					});
 				}
 				else
@@ -299,10 +342,7 @@
 			// without unnecessarily holding up the loading of other sub-imports.
 			if (isRoot)
 			{
-				return Promise.all([
-					Promise.all(rootContext.stylePromises),
-					Promise.all(rootContext.scriptPromises)
-				])
+				return Promise.all([...rootContext.stylePromises, ...rootContext.scriptPromises])
 				.then(() => rootContext.progress.loaded++);		// count root as loaded
 			}
 			else
@@ -317,65 +357,40 @@
 		})
 	}
 	
-	const nativeImportsSupported = ("import" in document.createElement("link"));
-	const forcePolyfill = location.search.includes("use-html-imports-polyfill");
-	const useNativeImports = (nativeImportsSupported && !forcePolyfill);
-	
-	if (!useNativeImports)
-		console.log("[HTMLImports] Using polyfill");
-
 	function AddImport(url, async, progressObject)
 	{
-		if (useNativeImports)
-		{
-			// Native path. Add <link rel="import"> to head.
-			return new Promise((resolve, reject) =>
-			{
-				const link = document.createElement("link");
-				link.onload = (() => resolve(link.import));
-				link.onerror = reject;
-				link.rel = "import";
-				
-				if (async)
-					link.setAttribute("async", "");
-				
-				link.href = url;
-				document.head.appendChild(link);
-			});
-		}
-		else
-		{
-			// Polyfill path. Note async attribute ignored.
-			return _AddImport(url, null, null, progressObject);
-		}
+		// Note async attribute ignored (was only used for old native implementation).
+		return _AddImport(url, null, null, progressObject);
+	}
+	
+	function AssociateScriptPathWithImport(scriptUrl, importDoc)
+	{
+		const fullUrl = new URL(scriptUrl, GetBaseURL()).toString();
+		
+		if (scriptUrlToImportDoc.has(fullUrl))
+			console.warn("[HTMLImports] Already have an import associated with script URL: " + fullUrl);
+		
+		scriptUrlToImportDoc.set(fullUrl, importDoc);
 	}
 
 	function GetImportDocument()
 	{
-		if (useNativeImports)
+		// Use our map of script to import document.
+		const currentScriptSrc = document.currentScript.src;
+		const importDoc = scriptUrlToImportDoc.get(currentScriptSrc);
+
+		if (importDoc)
 		{
-			// Native path: use the current script's owner document
-			return document.currentScript.ownerDocument;
+			return importDoc;
 		}
 		else
 		{
-			// Polyfill path: use our map of script to import document.
-			const currentScriptSrc = document.currentScript.src;
-			const importDoc = scriptUrlToImportDoc.get(currentScriptSrc);
-
-			if (importDoc)
-			{
-				return importDoc;
-			}
-			else
-			{
-				console.warn("[HTMLImports] Don't know which import script belongs to: " + currentScriptSrc);
-				return document;
-			}
+			console.warn("[HTMLImports] Don't know which import script belongs to: " + currentScriptSrc);
+			return document;
 		}
 	}
 
 	window["addImport"] = AddImport;
+	window["associateScriptPathWithImport"] = AssociateScriptPathWithImport;
 	window["getImportDocument"] = GetImportDocument;
-	window["hasNativeHTMLImportsSupport"] = (() => useNativeImports);
 }
