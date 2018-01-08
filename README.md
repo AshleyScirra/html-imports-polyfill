@@ -7,6 +7,8 @@ For background, see the blog post [HTML Imports are the best web component](http
 
 ## Chrome deprecating style application from imports
 
+As of early 2018, Google are planning to remove style application from HTML imports. This is a backwards-incompatible change and will break any existing uses of styles in imports. The polyfill supports styles in imports, so to avoid breaking in Chrome, the native path has been deleted and the polyfill path is now used in all browsers.
+
 ## Usage
 
 Simply include htmlimports.js with a normal script tag.
