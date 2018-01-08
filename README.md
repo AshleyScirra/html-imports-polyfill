@@ -5,6 +5,8 @@ For background, see the blog post [HTML Imports are the best web component](http
 
 [Can I Use... HTML Imports](http://caniuse.com/#feat=imports) stats.
 
+## Chrome deprecating style application from imports
+
 ## Usage
 
 Simply include htmlimports.js with a normal script tag.
@@ -15,19 +17,15 @@ The script adds three global functions. Note the polyfill makes no effort to rea
 
 `addImport(url, async, progressObject)`
 
-Load the HTML import at `url`. The `async` flag is only used if native HTML imports are supported, and sets the `async` attribute on the link element. `progressObject` has `loaded` and `total` properties written to it which can be checked periodically to determine loading progress. The function returns a promise that resolves when the import has finished loading.
+Load the HTML import at `url`. The `async` flag is no longer used (it only applied to the now-deleted native path). `progressObject` has `loaded` and `total` properties written to it which can be checked periodically to determine loading progress. The function returns a promise that resolves when the import has finished loading.
 
 `getImportDocument()`
 
 Returns the current import document, for script included from an import.
 
-`hasNativeHTMLImportsSupport()`
-
-Returns true if native imports are supported.
-
 ## How it works
 
-When HTML imports are natively supported, the functions simply wrap adding `<link rel="import">`. However when in polyfill mode, it works like this:
+The polyfill's `addImport()` function does the following:
 
 1. The import is fetched via XMLHttpRequest as a document.
 2. Any stylesheets and scripts in the returned document are moved to the main document, so styles are applied and scripts are run.
